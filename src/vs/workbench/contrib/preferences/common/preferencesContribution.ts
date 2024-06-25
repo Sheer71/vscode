@@ -24,6 +24,9 @@ import { RegisteredEditorPriority, IEditorResolverService } from 'vs/workbench/s
 import { ITextEditorService } from 'vs/workbench/services/textfile/common/textEditorService';
 import { DEFAULT_SETTINGS_EDITOR_SETTING, FOLDER_SETTINGS_PATH, IPreferencesService, USE_SPLIT_JSON_SETTING } from 'vs/workbench/services/preferences/common/preferences';
 import { IUserDataProfileService } from 'vs/workbench/services/userDataProfile/common/userDataProfile';
+import { IJSONSchema, IJSONSchemaMap } from 'vs/base/common/jsonSchema';
+import { JSONSchema } from 'vscode';
+import { Lazy } from 'vs/base/common/lazy';
 
 const schemaRegistry = Registry.as<JSONContributionRegistry.IJSONContributionRegistry>(JSONContributionRegistry.Extensions.JSONContribution);
 
@@ -119,26 +122,262 @@ export class PreferencesContribution implements IWorkbenchContribution {
 	}
 
 	private getSchemaModel(uri: URI): ITextModel {
-		let schema = schemaRegistry.getSchemaContributions().schemas[uri.toString()] ?? {} /* Use empty schema if not yet registered */;
-		const modelContent = JSON.stringify(schema);
-		const languageSelection = this.languageService.createById('jsonc');
-		const model = this.modelService.createModel(modelContent, languageSelection, uri);
-		const disposables = new DisposableStore();
-		disposables.add(schemaRegistry.onDidChangeSchema(schemaUri => {
-			if (schemaUri === uri.toString()) {
-				schema = schemaRegistry.getSchemaContributions().schemas[uri.toString()];
-				model.setValue(JSON.stringify(schema));
+
+		const definitions = new Map<string, JSONSchema>();
+
+		class Definition {
+			constructor(public name: string, public schema: JSONSchema) {
 			}
-		}));
-		disposables.add(model.onWillDispose(() => disposables.dispose()));
-		return model;
+		}
+
+		class Cache {
+			nodesForProperty: JSONSchema[] = [];
+			nodesByString = new Lazy<Map<JSONSchema, string>>(() => {
+				const nodeToString = new Map<JSONSchema, Definition>();
+				for (const node of this.nodesForProperty) {
+					const stringToDefinition = new Map<string, Definition>();
+					const str = JSON.stringify(node);
+					const otherNode = stringToNode.get(str);
+					if (otherNode) {
+						nodeToString.set(otherNode, str);
+						nodeToString.set(node, str);
+					} else {
+						stringToNode.set(str, node);
+					}
+				}
+				return nodeToString;
+			}
+
+
+
+		}
+
+
+
+		const getModelContent = (schema: IJSONSchema) => {
+			const start = new Date();
+
+			const nodeByProperty = new Map<string, IJSONSchema[]>();
+			const groupByProperty = (property: string, next: IJSONSchema) => {
+				let nodes = nodeByProperty.get(property);
+				if (!nodes) {
+					nodes = [];
+					nodeByProperty.set(property, nodes);
+				}
+				nodes.push(next);
+				return true;
+			};
+			traverseNodes(schema, groupByProperty);
+
+			const defByString = new Map<string, Definition>();
+			const nodeToDefinition = new Map<string, Definition>();
+			for (const [property, nodes] of nodeByProperty) {
+				if (nodes.length > 1) {
+					for (const node of nodes) {
+						const str = JSON.stringify(node);
+						let def = defByString.get(str);
+						if (def) {
+
+						}
+					}
+				}
+
+
+			}
+
+
+
+			const nodeByString = new Map<string, IJSONSchema[]>();
+			const externalize = (property: string, next: IJSONSchema) => {
+				let nodes = nodeByProperty.get(property);
+				if (!nodes || nodes.length < 2) {
+					// don't externalize if there is only one node at this property
+					return true;
+				}
+				let nextStr = undefined;
+				for (const node of nodes) {
+					const str = JSON.stringify(node);
+					if (node === next) {
+						nextStr = str;
+					}
+					let nodes = nodeByString.get(str);
+					if (!nodes) {
+						nodes = [];
+						nodeByString.set(property, nodes);
+					}
+					nodes.push(node);
+				}
+				if (nodeByString.get(nextStr!)!.length > 1) {
+
+				}
+
+
+				if (!nodes) {
+					nodes = [];
+					nodeByProperty.set(property, nodes);
+				}
+				nodes.push(next);
+				return true;
+			};
+
+		}
+
+
+
+
+		const groupByProperty = (property: string, next: IJSONSchema) => {
+			let nodes = nodeByProperty.get(property);
+			if (!nodes) {
+				nodes = [];
+				nodeByProperty.set(property, nodes);
+			}
+			nodes.push(next);
+			return true;
+		};
+
+
+		for (const [property, nodes] of nodeByProperty) {
+			if (nodes.length > 1) {
+				const nodeBy
+
+
+				console.log(`Found duplicate property ${property} in schema ${uri}:`);
+				for (const node of nodes) {
+					console.log(JSON.stringify(node));
+				}
+			}
+		}
+
+
+
+
+		console.log(`Found ${nDups} duplicates in schema ${uri}. Took ${new Date().getTime() - start.getTime()}ms.`);
+
+		return JSON.stringify(schema);
+	};
+
+
+		let schema = schemaRegistry.getSchemaContributions().schemas[uri.toString()] ?? {} /* Use empty schema if not yet registered */;
+const modelContent = getModelContent(schema);
+const languageSelection = this.languageService.createById('jsonc');
+const model = this.modelService.createModel(modelContent, languageSelection, uri);
+const disposables = new DisposableStore();
+disposables.add(schemaRegistry.onDidChangeSchema(schemaUri => {
+	if (schemaUri === uri.toString()) {
+		schema = schemaRegistry.getSchemaContributions().schemas[uri.toString()];
+		model.setValue(getModelContent(schema));
+	}
+}));
+disposables.add(model.onWillDispose(() => disposables.dispose()));
+return model;
 	}
 
-	dispose(): void {
-		dispose(this.editorOpeningListener);
-		dispose(this.settingsListener);
+dispose(): void {
+	dispose(this.editorOpeningListener);
+	dispose(this.settingsListener);
+}
+}
+
+type IJSONSchemaRef = IJSONSchema | boolean;
+export function isObject(val: any): val is object {
+	return typeof val === 'object' && val !== null && !Array.isArray(val);
+}
+
+function traverseNodes(root: IJSONSchema, visit: (property: string, schema: IJSONSchema) => boolean) {
+	if (!root || typeof root !== 'object') {
+		return;
+	}
+	const collectEntries = (...entries: (IJSONSchemaRef | undefined)[]) => {
+		for (const entry of entries) {
+			if (isObject(entry)) {
+				toWalk.push(entry);
+			}
+		}
+	};
+	const collectMapEntries = (...maps: (IJSONSchemaMap | undefined)[]) => {
+		for (const map of maps) {
+			if (isObject(map)) {
+				for (const key in map) {
+					const entry = map[key];
+					if (isObject(entry)) {
+						toWalk.push([key, entry]);
+					}
+				}
+			}
+		}
+	};
+	const collectArrayEntries = (...arrays: (IJSONSchemaRef[] | undefined)[]) => {
+		for (const array of arrays) {
+			if (Array.isArray(array)) {
+				for (const entry of array) {
+					if (isObject(entry)) {
+						toWalk.push(entry);
+					}
+				}
+			}
+		}
+	};
+	const collectEntryOrArrayEntries = (items: (IJSONSchemaRef[] | IJSONSchemaRef | undefined)) => {
+		if (Array.isArray(items)) {
+			for (const entry of items) {
+				if (isObject(entry)) {
+					toWalk.push(entry);
+				}
+			}
+		} else if (isObject(items)) {
+			toWalk.push(items);
+		}
+	};
+
+	const toWalk: (IJSONSchema | [string, IJSONSchema])[] = [root];
+
+	let next = toWalk.pop();
+	while (next) {
+		let visitChildern = true;
+		if (Array.isArray(next)) {
+			visitChildern = visit(next[0], next[1]);
+			next = next[1];
+		}
+		if (visitChildern) {
+			collectEntries(next.additionalItems, next.additionalProperties, next.not, next.contains, next.propertyNames, next.if, next.then, next.else, next.unevaluatedItems, next.unevaluatedProperties);
+			collectMapEntries(next.definitions, next.$defs, next.properties, next.patternProperties, <IJSONSchemaMap>next.dependencies, next.dependentSchemas);
+			collectArrayEntries(next.anyOf, next.allOf, next.oneOf, next.prefixItems);
+			collectEntryOrArrayEntries(next.items);
+		}
+		next = toWalk.pop();
 	}
 }
+
+// Remove the unused function declaration
+// function toStringWithReuse(schema: IJSONSchema) {
+// 	const map = new Map<string, string>();
+
+// 	function visit(schema: IJSONSchema) {
+// 		if (schema.properties) {
+// 			for (const key in schema.properties) {
+// 				visit(schema.properties[key]);
+// 			}
+// 		} else {
+// 			const str = JSON.stringify(schema);
+// 			hash()
+// 		}
+
+
+
+// 		const key = JSON.stringify(schema);
+// 		if (map.has(key)) {
+// 			return map.get(key);
+// 		}
+// 		const result = doVisit(schema);
+// 		map.set(key, result);
+// 		return result;
+// 	}
+
+
+// 	if (schema.properties) {
+
+// 	}
+// }
 
 const registry = Registry.as<IConfigurationRegistry>(Extensions.Configuration);
 registry.registerConfiguration({
